@@ -6,77 +6,102 @@ using System.Text;
 
 namespace Tools.Connections.Database
 {
-    public class Connection
+    public class Connection : IConnection
     {
+        private readonly DbProviderFactory _providerFactory;
         private readonly string _connectionString;
-        private readonly DbProviderFactory _factory;
 
-        public Connection(DbProviderFactory factory, string connectionString)
+        public Connection(DbProviderFactory providerFactory, string connectionString)
         {
-            if(string.IsNullOrWhiteSpace(connectionString))
-                throw new ArgumentException("'connectionString' isn't valid!!");
+            if (providerFactory is null)
+                throw new ArgumentNullException(nameof(providerFactory));
 
-            if (factory is null)
-                throw new ArgumentNullException(nameof(factory));
+            if (string.IsNullOrWhiteSpace(connectionString))
+                throw new ArgumentException("Invalid connection string...", nameof(connectionString));
 
+            _providerFactory = providerFactory;
             _connectionString = connectionString;
-            _factory = factory;
 
-            //Test de connexion
-            using(DbConnection DbConnection = CreateConnection())
+            using (DbConnection dbConnection = CreateConnection())
             {
-                try
-                {
-                    DbConnection.Open();
-                }
-                catch (DbException)
-                {
-                    throw new InvalidOperationException("'connectionString' isn't valid or the server is not started!!");
-                }
+                dbConnection.Open();
             }
         }
 
         public int ExecuteNonQuery(Command command)
         {
-            using (DbConnection DbConnection = CreateConnection())
-            {
-                using(DbCommand sqlCommand = CreateCommand(command, DbConnection))
-                {
-                    DbConnection.Open();
-                    return sqlCommand.ExecuteNonQuery();
-                }
-            }
-        }
+            if (command is null)
+                throw new ArgumentNullException(nameof(command));
 
-        public object ExecuteScalar(Command command)
-        {
-            using (DbConnection DbConnection = CreateConnection())
+            using (DbConnection dbConnection = CreateConnection())
             {
-                using (DbCommand sqlCommand = CreateCommand(command, DbConnection))
+                using (DbCommand dbCommand = CreateCommand(command, dbConnection))
                 {
-                    DbConnection.Open();
-                    object o = sqlCommand.ExecuteScalar();
-                    return (o is DBNull) ? null : o;
+                    dbConnection.Open();
+
+                    return dbCommand.ExecuteNonQuery();
                 }
             }
         }
 
         public IEnumerable<TResult> ExecuteReader<TResult>(Command command, Func<IDataRecord, TResult> selector)
         {
+            if (command is null)
+                throw new ArgumentNullException(nameof(command));
+
             if (selector is null)
                 throw new ArgumentNullException(nameof(selector));
 
-            using (DbConnection DbConnection = CreateConnection())
+            using (DbConnection dbConnection = CreateConnection())
             {
-                using (DbCommand sqlCommand = CreateCommand(command, DbConnection))
+                using (DbCommand dbCommand = CreateCommand(command, dbConnection))
                 {
-                    DbConnection.Open();
-                    using(IDataReader dataReader = sqlCommand.ExecuteReader())
+                    dbConnection.Open();
+
+                    using (DbDataReader dbDataReader = dbCommand.ExecuteReader())
                     {
-                        while(dataReader.Read())
+                        while (dbDataReader.Read())
                         {
-                            yield return selector(dataReader);
+                            yield return selector(dbDataReader);
                         }
+                    }
+                }
+            }
+        }
+
+        public object ExecuteScalar(Command command)
+        {
+            if (command is null)
+                throw new ArgumentNullException(nameof(command));
+
+            using (DbConnection dbConnection = CreateConnection())
+            {
+                using (DbCommand dbCommand = CreateCommand(command, dbConnection))
+                {
+                    dbConnection.Open();
+
+                    object o = dbCommand.ExecuteNonQuery();
+                    return o is DBNull ? null : o;
+                }
+            }
+        }
+
+        public DataSet GetDataSet(Command command)
+        {
+            if (command is null)
+                throw new ArgumentNullException(nameof(command));
+
+            using (DbConnection dbConnection = CreateConnection())
+            {
+                using (DbCommand dbCommand = CreateCommand(command, dbConnection))
+                {
+                    using (DbDataAdapter dbDataAdapter = _providerFactory.CreateDataAdapter())
+                    {
+                        dbDataAdapter.SelectCommand = dbCommand;
+                        DataSet dataSet = new DataSet();
+                        dbDataAdapter.Fill(dataSet);
+
+                        return dataSet;
                     }
                 }
             }
@@ -84,15 +109,18 @@ namespace Tools.Connections.Database
 
         public DataTable GetDataTable(Command command)
         {
-            using (DbConnection DbConnection = CreateConnection())
+            if (command is null)
+                throw new ArgumentNullException(nameof(command));
+
+            using (DbConnection dbConnection = CreateConnection())
             {
-                using (DbCommand sqlCommand = CreateCommand(command, DbConnection))
+                using (DbCommand dbCommand = CreateCommand(command, dbConnection))
                 {
-                    using (DbDataAdapter sqlDataAdapter = _factory.CreateDataAdapter())
+                    using (DbDataAdapter dbDataAdapter = _providerFactory.CreateDataAdapter())
                     {
-                        sqlDataAdapter.SelectCommand = sqlCommand;
+                        dbDataAdapter.SelectCommand = dbCommand;
                         DataTable dataTable = new DataTable();
-                        sqlDataAdapter.Fill(dataTable);
+                        dbDataAdapter.Fill(dataTable);
 
                         return dataTable;
                     }
@@ -100,49 +128,33 @@ namespace Tools.Connections.Database
             }
         }
 
-        public DataSet GetDataSet(Command command)
-        {
-            using (DbConnection DbConnection = CreateConnection())
-            {
-                using (DbCommand sqlCommand = CreateCommand(command, DbConnection))
-                {
-                    using (DbDataAdapter sqlDataAdapter = _factory.CreateDataAdapter())
-                    {
-                        sqlDataAdapter.SelectCommand = sqlCommand;
-                        DataSet dataSet = new DataSet();
-                        sqlDataAdapter.Fill(dataSet);
-                        return dataSet;
-                    }
-                }
-            }
-        }
-
         private DbConnection CreateConnection()
         {
-            DbConnection DbConnection = _factory.CreateConnection();
-            DbConnection.ConnectionString = _connectionString;
+            DbConnection dbConnection = _providerFactory.CreateConnection();
+            dbConnection.ConnectionString = _connectionString;
 
-            return DbConnection;
+            return dbConnection;
         }
 
-        private static DbCommand CreateCommand(Command command, DbConnection DbConnection)
+
+        private static DbCommand CreateCommand(Command command, DbConnection dbConnection)
         {
-            DbCommand sqlCommand = DbConnection.CreateCommand();
-            sqlCommand.CommandText = command.Query;
+            DbCommand dbCommand = dbConnection.CreateCommand();
+            dbCommand.CommandText = command.Query;
 
             if (command.IsStoredProcedure)
-                sqlCommand.CommandType = CommandType.StoredProcedure;
+                dbCommand.CommandType = CommandType.StoredProcedure;
 
-            foreach (KeyValuePair<string, object> kvp in command.Parameters)
+            foreach (KeyValuePair<string, object> item in command.Parameters)
             {
-                DbParameter sqlParameter = sqlCommand.CreateParameter();
-                sqlParameter.ParameterName = kvp.Key;
-                sqlParameter.Value = kvp.Value;
+                DbParameter dbParameter = dbCommand.CreateParameter();
+                dbParameter.ParameterName = item.Key;
+                dbParameter.Value = item.Value;
 
-                sqlCommand.Parameters.Add(sqlParameter);
+                dbCommand.Parameters.Add(dbParameter);
             }
 
-            return sqlCommand;
+            return dbCommand;
         }
     }
 }

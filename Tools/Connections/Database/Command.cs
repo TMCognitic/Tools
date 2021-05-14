@@ -10,23 +10,21 @@ namespace Tools.Connections.Database
         internal bool IsStoredProcedure { get; private set; }
         internal Dictionary<string, object> Parameters { get; private set; }
 
-        public Command(string query)
+        public Command(string query, bool isStoredProcedure)
         {
             if (string.IsNullOrWhiteSpace(query))
-                throw new ArgumentException("'query' isn't valid!!");
+                throw new ArgumentException("Invalid query...", nameof(query));
 
             Query = query;
-            Parameters = new Dictionary<string, object>();
-        }
-
-        public Command(string query, bool isStoredProcedure)
-            : this(query)
-        {
             IsStoredProcedure = isStoredProcedure;
+            Parameters = new Dictionary<string, object>();
         }
 
         public void AddParameter(string parameterName, object value)
         {
+            if (string.IsNullOrWhiteSpace(parameterName))
+                throw new ArgumentException("Invalid parameter name...", nameof(parameterName));
+
             Parameters.Add(parameterName, value ?? DBNull.Value);
         }
     }
